@@ -140,3 +140,4 @@ cython_debug/
 # Data files
 assets/
 logs/
+generated_images_gallery.png

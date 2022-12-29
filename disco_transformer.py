@@ -27,14 +27,22 @@ if verbose:
     logging.basicConfig(
         level=logging.INFO,
         handlers=[
-            logging.FileHandler(filename=os.path.join(log_folder, "train.log")),
+            logging.FileHandler(
+                filename=os.path.join(log_folder, "train.log"),
+                mode="w+",
+            ),
             logging.StreamHandler(),
         ],
     )
 else:
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[logging.FileHandler(filename=os.path.join(log_folder, "train.log"))],
+        handlers=[
+            logging.FileHandler(
+                filename=os.path.join(log_folder, "train.log"),
+                mode="w+",
+            )
+        ],
     )
 
 logger = logging.getLogger(__name__)
@@ -417,7 +425,7 @@ for epoch in range(1, max_epochs + 1):
 
         # Run backwards on GAN losses
 
-        total_gan_loss = 10.0 * rec_loss + 10.0 * val_loss + 0.5 * id_loss
+        total_gan_loss = rec_loss + 5 * val_loss + 10 * id_loss
         total_gan_loss.backward()
 
         # Discriminators
@@ -513,14 +521,14 @@ if len(img_filenames) > 0:
         for idx, filename in enumerate(img_filenames):
 
             with PIL.Image.open(os.path.join(test_root, filename)) as pil:
-                img_tensor = to_tensor(pil).to(device)
+                img_tensor = to_tensor(pil.convert("RGB")).to(device)
                 img_tensor = resize(img_tensor, image_resize_size)
                 generated = gen_style(img_tensor.unsqueeze(0))
 
-            axes[idx, 0].imshow(to_pil_image(generated[0]))
-            axes[idx, 1].imshow(to_pil_image(img_tensor))
+                axes[idx, 0].imshow(to_pil_image(generated[0]))
+                axes[idx, 1].imshow(to_pil_image(img_tensor))
         fig.suptitle("Your images gallery")
-        fig.savefig(os.path.join(test_root, "generated_images_gallery.png"))
+        fig.savefig("generated_images_gallery.png")
     if verbose:
         fig.show()
 
