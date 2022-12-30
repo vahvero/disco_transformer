@@ -18,11 +18,26 @@ from torchvision.transforms.functional import to_pil_image, to_tensor, resize
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 
-verbose = True
+# %% Set constants
+verbose = False
 
 log_folder = "logs"
-os.makedirs(log_folder, exist_ok=True)
+intermidiate_results_folder = os.path.join(log_folder, "epochs_results")
+intermidiate_models_folder = os.path.join(log_folder, "models")
+os.makedirs(intermidiate_results_folder, exist_ok=True)
+os.makedirs(intermidiate_models_folder, exist_ok=True)
 
+# These should already exits
+disco_root = "assets/disco"
+celeb_root = "assets/celeba"
+test_root = "assets/my_images"
+image_resize_size = (256, 256)
+batch_size = 2
+learning_rate = 2e-4
+max_epochs = int(1000)
+device = torch.device("cuda:0")
+
+# %% Set up logging
 if verbose:
     logging.basicConfig(
         level=logging.INFO,
@@ -48,17 +63,6 @@ else:
 logger = logging.getLogger(__name__)
 
 ImageTensor = FloatTensor
-
-# %% Set constants
-
-disco_root = "assets/disco"
-celeb_root = "assets/celeba"
-test_root = "assets/my_images"
-image_resize_size = (256, 256)
-batch_size = 2
-learning_rate = 2e-4
-max_epochs = int(10)
-device = torch.device("cuda:0")
 
 
 # %% Initiliaze datasets
@@ -344,7 +348,7 @@ gen_base_optimizer = Adam(
     lr=learning_rate,
     betas=(0.5, 0.999),
 )
-get_style_optimizer = Adam(
+gen_style_optimizer = Adam(
     gen_style.parameters(),
     lr=learning_rate,
     betas=(0.5, 0.999),
@@ -384,7 +388,7 @@ for epoch in range(1, max_epochs + 1):
     dis_fake_total_epoch_loss = []
     for base, style in dataloader:
         gen_base_optimizer.zero_grad()
-        get_style_optimizer.zero_grad()
+        gen_style_optimizer.zero_grad()
         dis_base_optimizer.zero_grad()
         dis_style_optimizer.zero_grad()
 
@@ -432,14 +436,14 @@ for epoch in range(1, max_epochs + 1):
         fake = torch.zeros(batch_size, 1, 30, 30).to(device)
 
         # Use generated fake images to calculate loss
-        dis_fake_base_loss = dis_loss_fn(dis_style(gen_style(base)), fake)
-        dis_fake_style_loss = dis_loss_fn(dis_base(gen_base(style)), fake)
+        dis_fake_base_loss = dis_loss_fn(dis_style(gen_style(base.detach())), fake)
+        dis_fake_style_loss = dis_loss_fn(dis_base(gen_base(style.detach())), fake)
 
         dis_fake_loss = (dis_fake_base_loss + dis_fake_style_loss) / 2
 
         # Use true images to calculate loss
-        dis_valid_style_loss = dis_loss_fn(dis_style(style), valid)
-        dis_valid_base_loss = dis_loss_fn(dis_base(base), valid)
+        dis_valid_style_loss = dis_loss_fn(dis_style(style.detach()), valid)
+        dis_valid_base_loss = dis_loss_fn(dis_base(base.detach()), valid)
 
         dis_valid_loss = (dis_valid_style_loss + dis_valid_base_loss) / 2
 
@@ -449,10 +453,10 @@ for epoch in range(1, max_epochs + 1):
 
         gan_total_epoch_loss.append(total_gan_loss.item())
         dis_valid_total_epoch_loss.append(dis_valid_loss.item())
-        dis_fake_total_epoch_loss.append(dis_valid_loss.item())
+        dis_fake_total_epoch_loss.append(dis_fake_loss.item())
 
         gen_base_optimizer.step()
-        get_style_optimizer.step()
+        gen_style_optimizer.step()
         dis_base_optimizer.step()
         dis_style_optimizer.step()
 
@@ -460,11 +464,53 @@ for epoch in range(1, max_epochs + 1):
     dis_valid_train_loss.append(sum(dis_valid_total_epoch_loss))
     dis_fake_train_loss.append(sum(dis_fake_total_epoch_loss))
 
-    logger.info("%4f", gan_train_loss[-1])
-    logger.info("%4f", dis_valid_train_loss[-1])
-    logger.info("%4f", dis_fake_train_loss[-1])
+    logger.info("GAN loss %4f", gan_train_loss[-1])
+    logger.info("Dicriminator valid loss %4f", dis_valid_train_loss[-1])
+    logger.info("Discriminator fake loss %4f", dis_fake_train_loss[-1])
 
     logger.info("%d / %d epoch done", epoch, max_epochs)
+
+    torch.save(
+        gen_style.state_dict(),
+        os.path.join(intermidiate_models_folder, f"{epoch}_gen_style.pth"),
+    )
+    torch.save(
+        gen_base.state_dict(),
+        os.path.join(intermidiate_models_folder, f"{epoch}_gen_base.pth"),
+    )
+    torch.save(
+        dis_base.state_dict(),
+        os.path.join(intermidiate_models_folder, f"{epoch}_dis_base.pth"),
+    )
+    torch.save(
+        dis_style.state_dict(),
+        os.path.join(intermidiate_models_folder, f"{epoch}_dis_style.pth"),
+    )
+
+    gen_style.eval()
+    gen_base.eval()
+    with torch.no_grad():
+
+        gen_base_img = gen_style(base)[0]
+        gen_style_img = gen_base(style)[0]
+        fig, axes = plt.subplots(nrows=2, ncols=2)
+
+        axes[0, 0].imshow(to_pil_image(gen_base_img))
+        axes[0, 1].imshow(to_pil_image(base[0]))
+        axes[0, 1].set_title("Base original")
+        axes[0, 0].set_title("Base -> Style")
+        axes[1, 0].imshow(to_pil_image(gen_style_img))
+        axes[1, 1].imshow(to_pil_image(style[0]))
+        axes[1, 1].set_title("Style original")
+        axes[1, 0].set_title("Style -> Base")
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(intermidiate_results_folder, f"{epoch}_test_gallery.png")
+        )
+        plt.close(fig)
+
+    gen_style.train()
+    gen_base.train()
 
 # %% Show losss
 

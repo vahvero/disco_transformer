@@ -28,6 +28,9 @@ can be replicated by running the `download_disco.sh` script.
 
         python disco_transformer.py
 
+It is unclear whether highly successful model can be obtained by for this problem and by this
+script. My attempts did not seem to converge, but then again, I am using 1650 Super to train this.
+
 ## Authors
 
 - https://github.com/vahvero

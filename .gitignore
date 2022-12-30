@@ -141,3 +141,4 @@ cython_debug/
 assets/
 logs/
 generated_images_gallery.png
+*.out
