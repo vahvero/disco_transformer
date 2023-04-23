@@ -17,7 +17,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms.functional import to_pil_image, to_tensor, resize
 from torch.utils.data import DataLoader
 from torch.optim import Adam
-
+from tqdm import tqdm
 # %% Set constants
 verbose = False
 
@@ -32,9 +32,9 @@ disco_root = "assets/disco"
 celeb_root = "assets/celeba"
 test_root = "assets/my_images"
 image_resize_size = (256, 256)
-batch_size = 2
-learning_rate = 2e-4
-max_epochs = int(1000)
+batch_size = 4
+learning_rate = 1e-4
+max_epochs = int(200)
 device = torch.device("cuda:0")
 
 # %% Set up logging
@@ -316,16 +316,17 @@ for base, style in dataloader:
     break
 
 if verbose:
-    fig, axes = plt.subplots(nrows=len(base), ncols=2)
+    fig, axes = plt.subplots(nrows=2, ncols=2)
 
     for idx, (base_image, style_image) in enumerate(zip(base, style, strict=True)):
         axes[idx, 0].imshow(to_pil_image(disco_dataset[index]))
         axes[idx, 0].set_title(f"Disco[{index}]")
         axes[idx, 1].imshow(to_pil_image(celeba_dataset[index]))
         axes[idx, 1].set_title(f"CelebA[{index}]")
+        if idx >= 1:
+            break
 
     fig.suptitle("Dataloader images")
-    fig.tight_layout()
 
 # %% Test constructors
 net = UNETGenerator()
@@ -377,16 +378,23 @@ gen_style.to(device)
 dis_base.to(device)
 dis_style.to(device)
 
+
+rec_train_loss = []
+val_train_loss = []
+id_train_loss = []
 gan_train_loss = []
 dis_valid_train_loss = []
 dis_fake_train_loss = []
 
 for epoch in range(1, max_epochs + 1):
 
+    rec_epoch_loss = []
+    val_epoch_loss = []
+    id_epoch_loss = []
     gan_total_epoch_loss = []
     dis_valid_total_epoch_loss = []
     dis_fake_total_epoch_loss = []
-    for base, style in dataloader:
+    for batch_idx, (base, style) in tqdm(enumerate(dataloader), total=len(dataloader), disable=not verbose):
         gen_base_optimizer.zero_grad()
         gen_style_optimizer.zero_grad()
         dis_base_optimizer.zero_grad()
@@ -395,8 +403,9 @@ for epoch in range(1, max_epochs + 1):
         base = base.to(device)
         style = style.to(device)
 
+        assert base.shape == style.shape
         # Generators
-        valid = torch.ones(batch_size, 1, 30, 30).to(device)
+        valid = torch.ones(base.shape[0], 1, 30, 30).to(device)
 
         # Val loss
         vbase_loss = gen_loss_fn(dis_base(gen_base(style)), valid)
@@ -428,22 +437,37 @@ for epoch in range(1, max_epochs + 1):
         id_loss = (idbase_loss + idstyle_loss) / 2
 
         # Run backwards on GAN losses
+        rec_epoch_loss.append(rec_loss.item())
+        val_epoch_loss.append(val_loss.item())
+        id_epoch_loss.append(id_loss.item())
 
         total_gan_loss = rec_loss + 5 * val_loss + 10 * id_loss
         total_gan_loss.backward()
 
         # Discriminators
-        fake = torch.zeros(batch_size, 1, 30, 30).to(device)
 
         # Use generated fake images to calculate loss
-        dis_fake_base_loss = dis_loss_fn(dis_style(gen_style(base.detach())), fake)
-        dis_fake_style_loss = dis_loss_fn(dis_base(gen_base(style.detach())), fake)
+        fake_gen_style = dis_style(gen_style(base.detach()))
+        fake_gen_base = dis_base(gen_base(style.detach()))
+        
+        fake = torch.zeros(base.shape[0], 1, 30, 30).to(device)
+        # assert fake_gen_style.shape == fake.shape
+        # assert fake_gen_base.shape == fake.shape
+
+        dis_fake_base_loss = dis_loss_fn(fake_gen_style, fake)
+        dis_fake_style_loss = dis_loss_fn(fake_gen_base, fake)
 
         dis_fake_loss = (dis_fake_base_loss + dis_fake_style_loss) / 2
 
+        valid_gen_style = dis_style(style.detach())
+        valid_gen_base = dis_base(base.detach())
+
+        # assert valid_gen_style.shape == valid.shape
+        # assert valid_gen_base.shape == valid.shape
+
         # Use true images to calculate loss
-        dis_valid_style_loss = dis_loss_fn(dis_style(style.detach()), valid)
-        dis_valid_base_loss = dis_loss_fn(dis_base(base.detach()), valid)
+        dis_valid_style_loss = dis_loss_fn(valid_gen_style, valid)
+        dis_valid_base_loss = dis_loss_fn(valid_gen_base, valid)
 
         dis_valid_loss = (dis_valid_style_loss + dis_valid_base_loss) / 2
 
@@ -460,6 +484,9 @@ for epoch in range(1, max_epochs + 1):
         dis_base_optimizer.step()
         dis_style_optimizer.step()
 
+    rec_train_loss.append(sum(rec_epoch_loss))
+    val_train_loss.append(sum(val_epoch_loss))
+    id_train_loss.append(sum(id_epoch_loss))
     gan_train_loss.append(sum(gan_total_epoch_loss))
     dis_valid_train_loss.append(sum(dis_valid_total_epoch_loss))
     dis_fake_train_loss.append(sum(dis_fake_total_epoch_loss))
@@ -518,6 +545,9 @@ plt.figure()
 plt.plot(gan_train_loss, label="GAN loss")
 plt.plot(dis_valid_train_loss, label="Discriminator valid")
 plt.plot(dis_fake_train_loss, label="Disciminator fake")
+plt.plot(rec_train_loss, label="Rec loss")
+plt.plot(val_train_loss, label="Val loss")
+plt.plot(id_train_loss, label="ID loss")
 plt.grid()
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
@@ -525,8 +555,8 @@ plt.yscale("log")
 plt.title("Loss by epoch")
 plt.legend()
 plt.savefig(os.path.join(log_folder, "train_loss_graph.png"))
-if verbose:
-    plt.show()
+if not verbose:
+    plt.close()
 
 
 # %% Test result
@@ -549,8 +579,8 @@ with torch.no_grad():
     axes[1, 0].set_title("Style -> Base")
     fig.tight_layout()
     fig.savefig(os.path.join(log_folder, "test_gallery.png"))
-    if verbose:
-        plt.show()
+    if not verbose:
+        plt.close(fig)
 
 
 # %% Test with real images
@@ -575,7 +605,7 @@ if len(img_filenames) > 0:
                 axes[idx, 1].imshow(to_pil_image(img_tensor))
         fig.suptitle("Your images gallery")
         fig.savefig("generated_images_gallery.png")
-    if verbose:
-        fig.show()
+    if not verbose:
+        plt.close()
 
 # %% Script ended
